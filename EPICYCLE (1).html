@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>EPICYCLE</title>
+<style>
+/* ===== TOKENS: flat grey diagram sheet, single ink, one theme (no dark mode) ===== */
+:root{--ink:#151515;--sheet:#cfd0ce;--glass:rgba(207,208,206,.85);--mono:"Courier New",Courier,monospace;
+  box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+html,body{margin:0;background:var(--sheet);color:var(--ink);font-family:var(--mono)}
+/* faint inline-SVG grain (no external image) */
+body::before{content:"";position:fixed;inset:0;z-index:0;pointer-events:none;opacity:.28;
+  background:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='200' height='200'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2'/><feColorMatrix values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 .5 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>")}
+/* graph-paper grid: 8px minor, 40px major, anchored so a major line passes through the page centre (--gx/--gy set in resize()) */
+body::after{content:"";position:fixed;inset:0;z-index:0;pointer-events:none;
+  background-image:linear-gradient(rgba(21,21,21,.3) 1px,transparent 1px),linear-gradient(90deg,rgba(21,21,21,.3) 1px,transparent 1px),
+    linear-gradient(rgba(21,21,21,.11) 1px,transparent 1px),linear-gradient(90deg,rgba(21,21,21,.11) 1px,transparent 1px);
+  background-size:40px 40px,40px 40px,8px 8px,8px 8px;background-position:var(--gx,0) var(--gy,0)}
+#scroll{height:700vh}                       /* gives scroll progress room; the page has no body content */
+#cv{position:fixed;inset:0;width:100%;height:100%;z-index:1;pointer-events:none;opacity:.92}  /* full-page pattern */
+
+/* ===== HEADER ===== */
+header{position:fixed;z-index:3;top:calc(14px + env(safe-area-inset-top,0px));left:14px;width:min(300px,calc(100% - 28px))}
+/* weight 900 where the font has it; the stroke adds extra weight on faces that stop at 700 */
+.title h1{margin:0;font:900 24px/1 "Helvetica Neue",Helvetica,Arial,sans-serif;letter-spacing:.12em;color:#d0121f;-webkit-text-stroke:.8px #d0121f}
+.title small{display:block;margin-top:4px;font-size:8px;letter-spacing:.2em}
+/* selector: 3 equal oval cells, symbols only; active = doubled outline */
+nav{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-top:10px}
+nav a{display:flex;justify-content:center;padding:4px 0;color:var(--ink);border:1px solid var(--ink);border-radius:999px}
+nav a.on{box-shadow:inset 0 0 0 1px var(--ink)}
+nav svg{width:24px;height:24px;fill:none;stroke:currentColor;stroke-width:1.2}
+
+/* ===== EQUATIONS ===== */
+#eq{position:fixed;z-index:2;top:calc(104px + env(safe-area-inset-top,0px));left:14px;margin:0;font:10px/1.6 var(--mono);white-space:pre}
+
+/* ===== CONTROL PANEL (bottom-left) ===== */
+#panel{position:fixed;z-index:4;left:14px;bottom:calc(14px + env(safe-area-inset-bottom,0px));width:190px;font-size:9px;letter-spacing:.1em;background:var(--glass);border:1px solid var(--ink)}
+#tog{width:100%;background:none;border:0;padding:5px 8px;font:inherit;color:var(--ink);text-align:left;cursor:pointer}
+#rows{padding:0 8px 6px;max-height:50vh;overflow-y:auto}
+#rows.hide{display:none}
+.row{margin:5px 0}.row div{display:flex;justify-content:space-between}
+input[type=range]{-webkit-appearance:none;appearance:none;width:100%;height:12px;background:none;margin:0;cursor:pointer}
+input[type=range]::-webkit-slider-runnable-track{height:1px;background:var(--ink)}
+input[type=range]::-moz-range-track{height:1px;background:var(--ink)}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:8px;height:8px;margin-top:-4px;background:var(--ink);border:0;border-radius:0}
+input[type=range]::-moz-range-thumb{width:8px;height:8px;background:var(--ink);border:0;border-radius:0}
+</style>
+</head>
+<body>
+<canvas id="cv"></canvas>
+<header>
+  <div class="title"><h1>EPICYCLE</h1><small>by IMAN ANVARI</small></div>
+  <nav id="nav">
+    <a href="#p=1" data-p="1" aria-label="1"><svg viewBox="0 0 32 32"><circle cx="16" cy="16" r="11"/><circle cx="23" cy="16" r="4"/></svg></a>
+    <a href="#p=2" data-p="2" aria-label="2"><svg viewBox="0 0 32 32"><path d="M16 16C22 6 30 6 30 16C30 26 22 26 16 16C10 6 2 6 2 16C2 26 10 26 16 16Z"/></svg></a>
+    <a href="#p=3" data-p="3" aria-label="3"><svg viewBox="0 0 32 32"><circle cx="16" cy="16" r="12"/><path d="M16 4 26.4 22 5.6 22ZM16 28 5.6 10 26.4 10Z"/></svg></a>
+  </nav>
+</header>
+<pre id="eq"></pre>
+<section id="panel"><button id="tog">PARAM [-]</button><div id="rows"></div></section>
+<main id="scroll" aria-hidden="true"></main>
+
+<script>
+"use strict";
+/* ============ CONFIG ============ */
+const DEBUG = true;                          // console logs for scroll/parameter values
+const TAU = Math.PI * 2, INK = "#151515";
+const KEYS = ["opacity","rotation","scale","complexity","contrast","harmonic","phase","weight","symmetry"]; // opacity first
+const lerp = (a, b, t) => a + (b - a) * t, clamp = (v, a = 0, b = 1) => Math.min(b, Math.max(a, v));
+const f = (v, d = 2) => v.toFixed(d);
+
+/* ============ STATE ============ */
+const P = {};                                // normalized 0-1 parameters
+let pattern = 1, raw = 0, S = 0, ang = 0, drift = 0, dirty = true, lastCalc = 0;
+
+/* ============ SCROLL -> PARAMETERS ============ */
+// smootherstep 6t^5 - 15t^4 + 10t^3: zero slope at both ends, so evolution eases in/out.
+const ease = t => t * t * t * (t * (6 * t - 15) + 10);
+function fromScroll(s) {
+  return {
+    opacity: lerp(.8, 1, s),
+    rotation: s,                             // angular speed = (0.08 + rotation) * 2π * 0.12 rad/s
+    scale: s,                                // extent = lerp(0.004, 1, scale) * half page diagonal (0% = a dot)
+    complexity: s,                           // layers = 1 + round(7 * complexity) -> 1..8
+    contrast: lerp(.3, 1, s),                // alpha gap between primary and secondary lines
+    harmonic: clamp(.2 + .5 * s + .08 * Math.sin(raw * TAU * 3)),  // harmonic drift with a slow wobble
+    phase: (raw * 1.5) % 1,
+    weight: .2 + .3 * s,
+    symmetry: s                              // rotational copies = 1 + round(3 * symmetry)
+  };
+}
+function calcScroll() {
+  const max = document.documentElement.scrollHeight - innerHeight;   // so 100% is reachable
+  raw = max > 0 ? clamp(scrollY / max) : 0; S = ease(raw);
+  Object.assign(P, fromScroll(S)); onParamsChanged();
+  if (DEBUG) console.log("[scroll]", f(raw, 3), "eased", f(S, 3), JSON.stringify(P, (k, v) => typeof v === "number" ? +v.toFixed(3) : v));
+}
+
+/* ============ CANVAS HELPERS ============ */
+const cv = document.getElementById("cv"), ctx = cv.getContext("2d");
+let W = 0, H = 0, K = 1, A0 = 1;
+const nCount = () => 1 + Math.round(P.complexity * 7);
+const symCount = () => 1 + Math.round(P.symmetry * 3);
+const sf = () => lerp(.004, 1, P.scale);                  // scale factor 0..1
+const RAD = () => sf() * Math.hypot(W, H) / 2;            // pattern radius reaches page corners at 100%
+const lw = () => .5 + P.weight * 1.8;
+const sa = () => lerp(.3, .95, P.contrast);               // secondary-line alpha
+const JIT = Float32Array.from({ length: 1024 }, (_, i) => { const v = Math.sin(i * 127.1) * 43758.5453; return v - Math.floor(v) - .5; });
+
+function style(a = 1, wMul = 1) { ctx.strokeStyle = INK; ctx.lineWidth = lw() * wMul; ctx.globalAlpha = A0 * a; }
+function polyline(p) {                                     // p = flat [x0,y0,x1,y1...]; sub-pixel jitter = plotted ink
+  ctx.beginPath();
+  for (let i = 0; i < p.length; i += 2) { const j = i >> 1, x = p[i] + JIT[j & 1023] * .6, y = p[i + 1] + JIT[(j + 512) & 1023] * .6; i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); }
+  ctx.stroke();
+}
+function withSym(rot0, fn) {                               // run fn per rotational copy, origin at page centre
+  const c = symCount();
+  for (let i = 0; i < c; i++) { ctx.save(); ctx.translate(W / 2, H / 2); ctx.rotate(rot0 + i * TAU / c); fn(i); ctx.restore(); }
+}
+function circle(x, y, r) { ctx.beginPath(); ctx.arc(x, y, r, 0, TAU); ctx.stroke(); }
+
+/* Diagram annotations that appear at scroll thresholds (axes, graduations, guide circles). Cheap: few path calls. */
+function overlay() {
+  const cx = W / 2, cy = H / 2, d = Math.hypot(W, H) / 2;
+  ctx.fillStyle = INK; ctx.globalAlpha = A0; ctx.beginPath(); ctx.arc(cx, cy, 2.4, 0, TAU); ctx.fill();   // origin dot (always)
+  style(.5, .6);
+  const m = 12, e = 18;                                    // corner registration marks (always)
+  for (const [x, y, sx, sy] of [[e,e,1,1],[W-e,e,-1,1],[e,H-e,1,-1],[W-e,H-e,-1,-1]]) { ctx.beginPath(); ctx.moveTo(x, y + sy * m); ctx.lineTo(x, y); ctx.lineTo(x + sx * m, y); ctx.stroke(); }
+  if (S > .08) { ctx.setLineDash([3, 6]); ctx.beginPath(); ctx.moveTo(0, cy); ctx.lineTo(W, cy); ctx.moveTo(cx, 0); ctx.lineTo(cx, H); ctx.stroke(); ctx.setLineDash([]); }
+  if (S > .25) {                                           // axis graduations
+    ctx.beginPath();
+    for (let x = cx % 40; x < W; x += 40) { ctx.moveTo(x, cy - 3); ctx.lineTo(x, cy + 3); }
+    for (let y = cy % 40; y < H; y += 40) { ctx.moveTo(cx - 3, y); ctx.lineTo(cx + 3, y); }
+    ctx.stroke();
+  }
+  if (S > .45) { ctx.setLineDash([2, 6]); for (let r = 120; r < d; r += 120) circle(cx, cy, r); ctx.setLineDash([]); } // guide circles
+}
+
+/* ============ PATTERNS (all start as a dot: radius ~0, 1 layer) ============ */
+/* P1: epicycle chain z(θ) = Σ r_i e^{i(k_i θ + φ_i)}. Each circle rides the tip of the previous one;
+   r_i = r0·q^i (geometric, Σ r_i ≤ R); k_i alternate sign (hypotrochoid-like); φ_i = i·(phase+drift) morphs the curve. */
+function pat1(t) {
+  const n = nCount(), R = RAD(), q = .62, r0 = R * (1 - q), kh = 1 + P.harmonic * 2.5, ph = P.phase * TAU + drift;
+  const r = [], k = []; for (let i = 0; i < n; i++) { r[i] = r0 * Math.pow(q, i); k[i] = i ? (i % 2 ? -1 : 1) * (1 + i * kh) : 1; }
+  const N = 520, pts = new Float32Array(2 * (N + 1));
+  for (let s = 0; s <= N; s++) {
+    const th = s / N * TAU * 4; let x = 0, y = 0;
+    for (let i = 0; i < n; i++) { const a = k[i] * th + i * ph; x += r[i] * Math.cos(a); y += r[i] * Math.sin(a); }
+    pts[2 * s] = x; pts[2 * s + 1] = y;
+  }
+  style(1); withSym(t * .25, () => polyline(pts));
+  let cx = 0, cy = 0; const th0 = t * 3;                   // live arm: circles + radii at the current angle
+  ctx.save(); ctx.translate(W / 2, H / 2); ctx.rotate(t * .25); style(sa(), .6);
+  for (let i = 0; i < n; i++) {
+    circle(cx, cy, r[i]); const a = k[i] * th0 + i * ph, tx = cx + r[i] * Math.cos(a), ty = cy + r[i] * Math.sin(a);
+    ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(tx, ty); ctx.stroke(); cx = tx; cy = ty;
+  }
+  ctx.restore();
+}
+/* P2: Lissajous x = Ax sin(aθ+φ), y = Ay sin(bθ), b = a(1+h/2), amplitudes fill the page rectangle;
+   plus rose r = R cos(kθ), k = 2 + 5h. */
+function pat2(t) {
+  const n = nCount(), h = P.harmonic, ph = P.phase * TAU + drift, Ax = W / 2 * .96 * sf(), Ay = H / 2 * .96 * sf(), R = RAD() * .7;
+  // curve counts capped: 1 Lissajous, plus 1 rose once complexity reaches 4 layers = 2 curves max (half of the previous 4)
+  const lm = 1, rm = n >= 4 ? 1 : 0, N = 400, TH = TAU * 4;
+  for (let j = 0; j < lm; j++) {
+    const a = 3 + j, b = a * (1 + h * .5), p = new Float32Array(2 * (N + 1));
+    for (let s = 0; s <= N; s++) { const th = s / N * TH; p[2 * s] = Ax * Math.sin(a * th + ph * (j + 1)); p[2 * s + 1] = Ay * Math.sin(b * th); }
+    style(j ? sa() : 1); withSym(t * .25, () => polyline(p));
+  }
+  for (let j = 0; j < rm; j++) {
+    const rr = R * (1 - j * .22), kk = 2 + h * 5 + j * .5, p = new Float32Array(2 * (N + 1));
+    for (let s = 0; s <= N; s++) { const th = s / N * TH, rad = rr * Math.cos(kk * th + ph * j); p[2 * s] = rad * Math.cos(th); p[2 * s + 1] = rad * Math.sin(th); }
+    style(sa(), .8); withSym(t * .25, () => polyline(p));
+  }
+}
+/* P3: star polygons {m/q}; vertex V_j = r(cos(2πj/m+θ), sin(2πj/m+θ)), edge V_j -> V_(j+q).
+   Layer i has m = 3+i sides, neighbours counter-rotate. Rings of radius ρ on a circle interlock (>25% complexity). */
+function pat3(t) {
+  const n = nCount(), R = RAD(), ph = P.phase * TAU + drift;
+  for (let i = 0; i < n; i++) {
+    const m = 3 + i, qmax = Math.floor((m - 1) / 2), q = qmax > 1 ? 1 + Math.round(P.harmonic * (qmax - 1)) : 1;
+    const ri = R * (1 - i / (n + 1) * .75), th = (i % 2 ? -1 : 1) * t * (.4 + .15 * i) + i * ph * .3;
+    style(i ? sa() : 1);
+    withSym(0, () => {
+      ctx.beginPath();
+      for (let j = 0; j < m; j++) { const a = TAU * j / m + th, b = TAU * ((j + q) % m) / m + th; ctx.moveTo(ri * Math.cos(a), ri * Math.sin(a)); ctx.lineTo(ri * Math.cos(b), ri * Math.sin(b)); }
+      ctx.stroke();
+    });
+    style(sa() * .6, .6); circle(W / 2, H / 2, ri);
+  }
+  if (P.complexity > .25) {
+    const Kr = 3 + Math.floor(P.complexity * 5), c = R * .5, rho = c * .8; style(sa(), .7);
+    for (let j = 0; j < Kr; j++) { const a = TAU * j / Kr + t * .3; circle(W / 2 + c * Math.cos(a), H / 2 + c * Math.sin(a), rho); }
+  }
+}
+const PATTERNS = { 1: pat1, 2: pat2, 3: pat3 };
+
+/* ============ EQUATIONS (refreshed only when parameters/pattern change) ============ */
+function equations() {
+  const n = nCount(), s = f(sf()), h = P.harmonic, ph = f(P.phase * TAU), c = symCount();
+  if (pattern === 1) return `x(t) = Σ r_i·cos(k_i·t + φ_i)\ny(t) = Σ r_i·sin(k_i·t + φ_i)\nn = ${n}   r_i = ${s}·0.38·0.62^i\nk_i = ±(1 + i·${f(1 + h * 2.5)})\nφ_i = i·${ph}   sym = ${c}`;
+  if (pattern === 2) return `x(t) = ${s}·sin(a·t + ${ph})\ny(t) = ${s}·sin(b·t)\na = 3   b = ${f(3 * (1 + h * .5))}\nr(θ) = ${f(sf() * .7)}·cos(${f(2 + h * 5)}·θ)\nsym = ${c}`;
+  return `V_j = r·(cos(2πj/m + θ),\n        sin(2πj/m + θ))\nm = 3..${2 + n}   V_j → V_(j+q)\nr_i = ${s}·(1 - i/${n + 1}·0.75)\nK = ${3 + Math.floor(P.complexity * 5)}   sym = ${c}`;
+}
+
+/* ============ UI ============ */
+const eqEl = document.getElementById("eq"), rowsEl = document.getElementById("rows"), ui = {};
+function onParamsChanged() { for (const k of KEYS) { ui[k].input.value = P[k]; ui[k].val.textContent = f(P[k]); } eqEl.textContent = equations(); writeHash(); }
+KEYS.forEach(k => {
+  const row = document.createElement("div"); row.className = "row";
+  row.innerHTML = `<div><span>${k.toUpperCase()}</span><span></span></div><input type="range" min="0" max="1" step="0.001">`;
+  const input = row.querySelector("input"), val = row.querySelectorAll("span")[1];
+  input.addEventListener("input", () => { P[k] = +input.value; if (DEBUG) console.log("[slider]", k, f(P[k], 3)); onParamsChanged(); });
+  ui[k] = { input, val }; rowsEl.appendChild(row);
+});
+const tog = document.getElementById("tog");
+tog.onclick = () => { const h = rowsEl.classList.toggle("hide"); tog.textContent = h ? "PARAM [+]" : "PARAM [-]"; };
+if (innerWidth < 700) tog.click();
+function setPattern(p) { pattern = p; document.querySelectorAll("#nav a").forEach(a => a.classList.toggle("on", +a.dataset.p === p)); eqEl.textContent = equations(); writeHash(); }
+document.querySelectorAll("#nav a").forEach(a => a.addEventListener("click", e => { e.preventDefault(); setPattern(+a.dataset.p); }));
+
+/* ============ URL HASH (silent): #p=1&opacity=0.800&... ============ */
+let ht;
+function writeHash() { clearTimeout(ht); ht = setTimeout(() => { try { history.replaceState(null, "", "#" + ["p=" + pattern].concat(KEYS.map(k => k + "=" + P[k].toFixed(3))).join("&")); } catch (e) {} }, 200); }
+function readHash() {
+  try {
+    const h = location.hash.slice(1); if (!h) return false; const m = {};
+    h.split("&").forEach(s => { const [a, b] = s.split("="); m[a] = b; });
+    if ([1, 2, 3].includes(+m.p)) pattern = +m.p;
+    let any = false; KEYS.forEach(k => { if (m[k] !== undefined && !isNaN(+m[k])) { P[k] = clamp(+m[k]); any = true; } });
+    return any;
+  } catch (e) { return false; }
+}
+
+/* ============ LOOP ============ */
+function resize() { W = innerWidth; H = innerHeight; K = Math.min(devicePixelRatio || 1, 1.5); cv.width = W * K; cv.height = H * K;
+  document.documentElement.style.setProperty("--gx", (W / 2 % 40) + "px"); document.documentElement.style.setProperty("--gy", (H / 2 % 40) + "px"); }
+addEventListener("resize", resize);
+addEventListener("scroll", () => { dirty = true; }, { passive: true });   // flag only; work is throttled in the loop
+const mobile = matchMedia("(pointer:coarse)").matches;                    // 30fps on touch
+let last = performance.now(), frame = 0;
+function loop(now) {
+  requestAnimationFrame(loop);
+  if (mobile && (frame++ & 1)) return;
+  if (dirty && now - lastCalc >= 16) { calcScroll(); dirty = false; lastCalc = now; }
+  const dt = Math.min((now - last) / 1000, .1); last = now;
+  ang += (.08 + P.rotation) * TAU * .12 * dt;                             // integrate angle: speed changes never jump
+  drift += dt * .05 * (1 + S);
+  A0 = .15 + .85 * P.opacity;
+  ctx.setTransform(K, 0, 0, K, 0, 0); ctx.clearRect(0, 0, W, H); ctx.lineJoin = ctx.lineCap = "round";
+  overlay(); PATTERNS[pattern](ang);
+}
+
+/* ============ INIT ============ */
+resize();
+if (!readHash()) calcScroll(); else dirty = false;                        // hash parameters win until the first scroll
+KEYS.forEach(k => { if (P[k] === undefined) P[k] = 0; });
+setPattern(pattern); onParamsChanged();
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
